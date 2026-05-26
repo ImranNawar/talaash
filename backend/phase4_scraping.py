@@ -62,6 +62,11 @@ Required JSON schema (output exactly this structure):
   "student_requirements": "string or null"
 }
 
+For is_accepting_students:
+- true if the page mentions recruiting students, open positions, hiring PhD/Masters students, or accepting applications
+- false only if the page explicitly states they are not hiring or not accepting students
+- null if hiring status is not mentioned
+
 Webpage text:
 {text}
 
@@ -227,6 +232,16 @@ def _call_gemini_extract(text: str, url: str) -> Optional[LabProfile]:
             return None
 
         data["lab_url"] = data.get("lab_url") or url
+
+        raw_accepting = data.get("is_accepting_students")
+        if isinstance(raw_accepting, str):
+            v = raw_accepting.lower().strip()
+            if v in ("true", "yes"):
+                data["is_accepting_students"] = True
+            elif v in ("false", "no"):
+                data["is_accepting_students"] = False
+            else:
+                data["is_accepting_students"] = None
 
         # coerce list keys to avoid None/str there
         for list_key in ["co_pis", "research_areas", "current_projects", "methods_used", "recent_publications"]:

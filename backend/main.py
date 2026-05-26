@@ -26,7 +26,7 @@ from models import UserInput, SearchResponse, MatchResult, LabProfile
 from phase2_expansion import expand_queries
 from phase4_scraping import scrape_and_extract
 from phase5_vectorstore import embed_and_store, embed_user_query
-from phase6_matching import match_and_rank
+from phase6_matching import match_and_rank, build_results_from_profiles
 
 logging.basicConfig(
     level=logging.INFO,
@@ -117,10 +117,6 @@ async def run_pipeline(user_input: UserInput):
         logger.warning(f"Discovery failed: {e}")
         candidate_urls = [MVP_TEST_URL]
 
-    # Always include MVP test URL to ensure at least 1 result
-    if MVP_TEST_URL not in candidate_urls:
-        candidate_urls.insert(0, MVP_TEST_URL)
-
     total_candidates = len(candidate_urls)
     yield sse_event(3, "Discovering research labs", "done", f"{total_candidates} candidate URLs found")
 
@@ -165,26 +161,15 @@ async def run_pipeline(user_input: UserInput):
         )
     except Exception as e:
         logger.warning(f"Matching failed: {e} — falling back to extracted profiles")
-        # Fallback: return the extracted profiles even if matching fails
-        # This ensures users see the 9 profiles that were successfully extracted in Phase 5
         try:
-            from phase5_vectorstore import _has_recent_publication, _compute_final_score
-            for profile in profiles:
-                has_recent = _has_recent_publication(profile.recent_publications)
-                final = _compute_final_score(70, 0.5, has_recent, profile.is_accepting_students, user_input.goal)
-                results.append(MatchResult(
-                    profile=profile,
-                    final_score=round(final, 1),
-                    match_reasons=["Profile extracted from research lab website"],
-                    gaps=["Contact lab directly for specific requirements"],
-                    has_recent_publication=has_recent,
-                ))
+            results = build_results_from_profiles(profiles, user_input, llm_score=70, cosine_sim=0.5)
         except Exception as e2:
             logger.warning(f"Fallback also failed: {e2}")
             results = []
-    
+
     if not results and profiles:
-        logger.info(f"Phase 6: No matching results, but returning {len(profiles)} extracted profiles as fallback")
+        logger.info(f"Phase 6: No matches from vector search — returning {len(profiles)} extracted profiles")
+        results = build_results_from_profiles(profiles, user_input, llm_score=65, cosine_sim=0.5)
     
     yield sse_event(6, "Matching and ranking", "done", f"{len(results)} profiles available")
 

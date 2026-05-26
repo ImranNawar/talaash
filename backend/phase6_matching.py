@@ -23,6 +23,171 @@ logger = logging.getLogger(__name__)
 genai.configure(api_key=GEMINI_API_KEY)
 _gemini_model = genai.GenerativeModel("gemini-1.5-flash")
 
+GENERIC_PLACEHOLDER_PHRASES = (
+    "profile extracted from research lab website",
+    "contact the lab directly for specific requirements",
+    "contact lab directly for specific requirements",
+)
+
+
+def _coerce_accepting(value) -> bool | None:
+    if value is True or value is False:
+        return value
+    if isinstance(value, str):
+        v = value.lower().strip()
+        if v in ("true", "yes", "1"):
+            return True
+        if v in ("false", "no", "0"):
+            return False
+        if v in ("null", "none", ""):
+            return None
+    return None
+
+
+def _is_placeholder_text(text: str) -> bool:
+    if not text or not isinstance(text, str):
+        return True
+    t = text.lower().strip()
+    return any(p in t for p in GENERIC_PLACEHOLDER_PHRASES)
+
+
+def _filter_placeholders(items: list[str]) -> list[str]:
+    return [x for x in items if x and not _is_placeholder_text(x)]
+
+
+def _token_set(text: str) -> set[str]:
+    if not text:
+        return set()
+    words = re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", text.lower())
+    return {w for w in words if len(w) > 2}
+
+
+def _overlaps(phrase: str, user_tokens: set[str]) -> bool:
+    phrase_tokens = _token_set(phrase)
+    return bool(phrase_tokens and phrase_tokens & user_tokens)
+
+
+def _generate_profile_based_reasons(profile: LabProfile, user_input: UserInput) -> list[str]:
+    """Build specific match reasons from profile fields vs user input (no LLM)."""
+    user_blob = " ".join(
+        filter(
+            None,
+            [
+                user_input.research_interests,
+                user_input.technical_skills,
+                user_input.keywords or "",
+                user_input.goal,
+            ],
+        )
+    )
+    user_tokens = _token_set(user_blob)
+    reasons: list[str] = []
+
+    for area in profile.research_areas[:6]:
+        if _overlaps(area, user_tokens):
+            reasons.append(f"Overlapping research area: {area}")
+
+    for method in profile.methods_used[:6]:
+        if _overlaps(method, user_tokens):
+            reasons.append(f"Uses {method}, which matches your listed skills")
+
+    for project in profile.current_projects[:4]:
+        if _overlaps(project, user_tokens):
+            reasons.append(f"Active project aligns with your interests: {project}")
+
+    if profile.is_accepting_students is True:
+        reasons.append("Lab page indicates they are accepting students")
+
+    if profile.student_requirements and _overlaps(profile.student_requirements, user_tokens):
+        reasons.append("Student requirements mention skills you have listed")
+
+    if _has_recent_publication(profile.recent_publications) and len(reasons) < 4:
+        reasons.append("Recent publications suggest an active research group")
+
+    if profile.university and user_input.preferred_region:
+        regions = [r.strip().lower() for r in user_input.preferred_region.split(",")]
+        uni_lower = profile.university.lower()
+        dept_lower = (profile.department or "").lower()
+        for region in regions:
+            if region and region != "global" and (region in uni_lower or region in dept_lower):
+                reasons.append(f"Located at {profile.university}, within your preferred region")
+                break
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for r in reasons:
+        key = r.lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(r)
+
+    if not unique:
+        if profile.research_areas:
+            areas = ", ".join(profile.research_areas[:3])
+            unique.append(f"Lab research areas include {areas}")
+        elif profile.lab_name:
+            unique.append(f"{profile.lab_name} was ranked as a candidate match for your profile")
+
+    return unique[:4]
+
+
+def _generate_profile_based_gaps(profile: LabProfile, user_input: UserInput) -> list[str]:
+    """Skills the user may develop at this lab; empty if nothing specific."""
+    skill_tokens = _token_set(
+        user_input.technical_skills + " " + (user_input.keywords or "")
+    )
+    gaps: list[str] = []
+
+    for method in profile.methods_used[:8]:
+        if method and not _overlaps(method, skill_tokens):
+            gaps.append(f"You could develop experience with {method}, used by this lab")
+
+    return gaps[:2]
+
+
+def _finalize_match_content(
+    profile: LabProfile,
+    user_input: UserInput,
+    match_reasons: list[str],
+    gaps: list[str],
+) -> tuple[list[str], list[str]]:
+    reasons = _filter_placeholders(match_reasons or [])
+    gap_list = _filter_placeholders(gaps or [])
+    if not reasons:
+        reasons = _generate_profile_based_reasons(profile, user_input)
+    if not gap_list:
+        gap_list = _generate_profile_based_gaps(profile, user_input)
+    return reasons, gap_list
+
+
+def build_results_from_profiles(
+    profiles: list[LabProfile],
+    user_input: UserInput,
+    llm_score: float = 65,
+    cosine_sim: float = 0.5,
+    limit: int = 10,
+) -> list[MatchResult]:
+    """Build ranked MatchResults when Phase 6 similarity/rerank is unavailable."""
+    results: list[MatchResult] = []
+    for profile in profiles[:limit]:
+        has_recent = _has_recent_publication(profile.recent_publications)
+        final = _compute_final_score(
+            llm_score, cosine_sim, has_recent, profile.is_accepting_students, user_input.goal
+        )
+        reasons, gaps = _finalize_match_content(profile, user_input, [], [])
+        results.append(
+            MatchResult(
+                profile=profile,
+                final_score=round(final, 1),
+                match_reasons=reasons,
+                gaps=gaps,
+                has_recent_publication=has_recent,
+            )
+        )
+    results.sort(key=lambda r: r.final_score, reverse=True)
+    return results
+
+
 RERANKER_PROMPT = """You are an academic research group matching expert.
 
 Given a researcher's profile and a list of research lab candidates, score how well each lab matches.
@@ -75,9 +240,7 @@ def _rebuild_profile_from_meta(meta: dict, url: str) -> LabProfile:
     except Exception:
         pass
 
-    is_accepting = meta.get("is_accepting_students")
-    if is_accepting == "null":
-        is_accepting = None
+    is_accepting = _coerce_accepting(meta.get("is_accepting_students"))
 
     return LabProfile(
         pi_name=meta.get("pi_name") or None,
@@ -245,34 +408,34 @@ def match_and_rank(user_input: UserInput, user_embedding: list[float] | None, us
     results: list[MatchResult] = []
 
     if rerank_data is None:
-        # Fallback: return all profiles with default scores (no LLM re-ranking)
-        logger.info("Gemini re-ranking failed — returning all profiles with default scores.")
-        for profile, sim in candidates_with_sim[:10]:  # Limit to top 10
+        logger.info("Gemini re-ranking failed — using profile-based match explanations.")
+        for profile, sim in candidates_with_sim[:10]:
             has_recent = _has_recent_publication(profile.recent_publications)
             final = _compute_final_score(60, sim, has_recent, profile.is_accepting_students, user_input.goal)
+            reasons, gaps = _finalize_match_content(profile, user_input, [], [])
             results.append(MatchResult(
                 profile=profile,
                 final_score=round(final, 1),
-                match_reasons=["Profile extracted from research lab website"],
-                gaps=["Contact the lab directly for specific requirements"],
+                match_reasons=reasons,
+                gaps=gaps,
                 has_recent_publication=has_recent,
             ))
     else:
-        # Build lookup from re-ranker data
         rerank_map = {item.get("lab_url", ""): item for item in rerank_data if isinstance(item, dict)}
 
         for profile, sim in candidates_with_sim:
             rdata = rerank_map.get(profile.lab_url, {})
             llm_score = float(rdata.get("score", 50))
-            match_reasons = rdata.get("match_reasons", [])[:4]
-            gaps = rdata.get("gaps", [])[:2]
+            raw_reasons = rdata.get("match_reasons", [])[:4]
+            raw_gaps = rdata.get("gaps", [])[:2]
+            reasons, gaps = _finalize_match_content(profile, user_input, raw_reasons, raw_gaps)
             has_recent = _has_recent_publication(profile.recent_publications)
             final = _compute_final_score(llm_score, sim, has_recent, profile.is_accepting_students, user_input.goal)
 
             results.append(MatchResult(
                 profile=profile,
                 final_score=round(final, 1),
-                match_reasons=match_reasons,
+                match_reasons=reasons,
                 gaps=gaps,
                 has_recent_publication=has_recent,
             ))

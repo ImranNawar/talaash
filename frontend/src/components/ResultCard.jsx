@@ -5,10 +5,32 @@ import {
 } from 'lucide-react'
 import ScoreBar from './ScoreBar.jsx'
 
+const PLACEHOLDER_PHRASES = [
+  'profile extracted from research lab website',
+  'contact the lab directly',
+  'contact lab directly',
+]
+
+function normalizeAccepting(value) {
+  if (value === true || value === 'true') return true
+  if (value === false || value === 'false') return false
+  return null
+}
+
+function isPlaceholderText(text) {
+  const t = (text || '').toLowerCase()
+  return PLACEHOLDER_PHRASES.some(p => t.includes(p))
+}
+
+function filterPlaceholders(items) {
+  return (items || []).filter(item => item && !isPlaceholderText(item))
+}
+
 function AcceptingBadge({ value }) {
-  if (value === true)  return <span className="badge badge-green">✓ Accepting Students</span>
-  if (value === false) return <span className="badge badge-red">✗ Not Accepting</span>
-  return <span className="badge badge-grey">? Status Unknown</span>
+  const status = normalizeAccepting(value)
+  if (status === true)  return <span className="badge badge-green">✓ Accepting Students</span>
+  if (status === false) return <span className="badge badge-red">✗ Not Accepting</span>
+  return null
 }
 
 function TagList({ items, max = 6 }) {
@@ -28,6 +50,10 @@ function TagList({ items, max = 6 }) {
 export default function ResultCard({ result, rank }) {
   const { profile, final_score, match_reasons, gaps, has_recent_publication } = result
   const [expanded, setExpanded] = useState(false)
+
+  const displayReasons = filterPlaceholders(match_reasons)
+  const displayGaps = filterPlaceholders(gaps)
+  const acceptingStatus = normalizeAccepting(profile.is_accepting_students)
 
   const displayName = profile.lab_name || `${profile.pi_name || 'Research Group'}'s Lab`
   const displayInstitution = [profile.university, profile.department].filter(Boolean).join(' · ')
@@ -83,7 +109,7 @@ export default function ResultCard({ result, rank }) {
               )}
             </div>
             <div className="flex flex-col items-end gap-2">
-              <AcceptingBadge value={profile.is_accepting_students} />
+              <AcceptingBadge value={acceptingStatus} />
               {has_recent_publication && (
                 <span className="badge badge-green" style={{ fontSize: '0.65rem' }}>
                   📄 Recent Publications
@@ -100,15 +126,15 @@ export default function ResultCard({ result, rank }) {
       </div>
 
       {/* ── Match Reasons ────────────────────────────────────────────────── */}
-      {match_reasons && match_reasons.length > 0 && (
+      {displayReasons.length > 0 && (
         <div className="mb-4 p-4 rounded-xl"
           style={{ background: '#e0e9ff', border: '1px solid #c2d3ff' }}>
           <p className="text-xs font-semibold uppercase tracking-widest mb-2.5"
             style={{ color: '#4361ee' }}>
-            ✦ Why This Lab Matches
+            Why This Lab Matches
           </p>
           <ul className="space-y-1.5">
-            {match_reasons.map((reason, i) => (
+            {displayReasons.map((reason, i) => (
               <li key={i} className="flex items-start gap-2 text-sm"
                 style={{ color: 'var(--text-secondary)' }}>
                 <span className="mt-0.5 text-xs flex-shrink-0" style={{ color: 'var(--brand-light)' }}>●</span>
@@ -120,15 +146,15 @@ export default function ResultCard({ result, rank }) {
       )}
 
       {/* ── Gaps ─────────────────────────────────────────────────────────── */}
-      {gaps && gaps.length > 0 && (
+      {displayGaps.length > 0 && (
         <div className="mb-4 p-4 rounded-xl"
           style={{ background: '#fef3c7', border: '1px solid #fde68a' }}>
           <p className="text-xs font-semibold uppercase tracking-widest mb-2.5"
             style={{ color: '#ca8a04' }}>
-            △ Skills Gap / You'd Learn
+            Skills You Could Develop
           </p>
           <ul className="space-y-1.5">
-            {gaps.map((gap, i) => (
+            {displayGaps.map((gap, i) => (
               <li key={i} className="flex items-start gap-2 text-sm"
                 style={{ color: 'var(--text-secondary)' }}>
                 <span className="mt-0.5 text-xs flex-shrink-0" style={{ color: '#f59e0b' }}>▸</span>
