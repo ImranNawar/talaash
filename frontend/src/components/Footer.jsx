@@ -38,7 +38,7 @@ export default function Footer() {
                 title="LinkedIn">
                 <Linkedin size={18} />
               </a>
-              <a href="imran1nawar@gmail.com" className="p-2 rounded-lg transition-colors"
+              <a href="mailto:imran1nawar@gmail.com" className="p-2 rounded-lg transition-colors"
                 style={{ background: '#e0e9ff', color: '#4361ee' }}
                 title="Email">
                 <Mail size={18} />
