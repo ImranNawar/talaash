@@ -2,7 +2,7 @@ import { useState } from 'react'
 import SearchForm from './SearchForm.jsx'
 import LoadingPhase from './LoadingPhase.jsx'
 import ResultCard from './ResultCard.jsx'
-import { Search, Microscope } from 'lucide-react'
+import { Search } from 'lucide-react'
 
 const PHASE_LABELS = [
   'Analyzing your profile',
@@ -34,6 +34,8 @@ export default function Home() {
     setError(null)
     setView('loading')
 
+    let receivedTerminalEvent = false
+
     try {
       const response = await fetch('/api/search/stream', {
         method: 'POST',
@@ -49,6 +51,35 @@ export default function Home() {
       const decoder = new TextDecoder()
       let buffer = ''
 
+      const processLine = (line) => {
+        if (!line.startsWith('data: ')) return
+        const raw = line.slice(6).trim()
+        if (!raw) return
+        try {
+          const data = JSON.parse(raw)
+
+          if (data.type === 'results') {
+            receivedTerminalEvent = true
+            setTotalFound(data.total_candidates || 0)
+            setResults(data.results || [])
+            setView('results')
+          } else if (data.type === 'error') {
+            receivedTerminalEvent = true
+            setError(data.detail || 'An unexpected error occurred.')
+            setResults([])
+            setView('results')
+          } else if (data.phase) {
+            setPhases(prev => prev.map(p =>
+              p.phase === data.phase
+                ? { ...p, status: data.status, detail: data.detail || '' }
+                : p
+            ))
+          }
+        } catch (e) {
+          // ignore parse errors
+        }
+      }
+
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
@@ -58,31 +89,22 @@ export default function Home() {
         buffer = lines.pop()
 
         for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const raw = line.slice(6).trim()
-          if (!raw) continue
-          try {
-            const data = JSON.parse(raw)
-
-            if (data.type === 'results') {
-              setTotalFound(data.total_candidates || 0)
-              setResults(data.results || [])
-              setView('results')
-            } else if (data.type === 'error') {
-              setView('results')
-            } else if (data.phase) {
-              setPhases(prev => prev.map(p =>
-                p.phase === data.phase
-                  ? { ...p, status: data.status, detail: data.detail || '' }
-                  : p
-              ))
-            }
-          } catch (e) {
-            // ignore parse errors
-          }
+          processLine(line)
         }
       }
+
+      // Flush any remaining buffered SSE line
+      if (buffer.trim()) {
+        processLine(buffer)
+      }
+
+      if (!receivedTerminalEvent) {
+        setError('The search ended unexpectedly. Please try again.')
+        setResults([])
+        setView('results')
+      }
     } catch (err) {
+      setError(err.message || 'Failed to reach the server. Is the backend running?')
       setResults([])
       setView('results')
     }
@@ -153,9 +175,13 @@ export default function Home() {
             <div className="flex items-center justify-between mb-8">
               <div>
                 <h2 className="text-3xl font-bold" style={{ color: 'var(--text-primary)' }}>
-                  {results.length > 0 ? `${results.length} Matched Labs` : 'No Matches Found'}
+                  {error
+                    ? 'Search Failed'
+                    : results.length > 0
+                      ? `${results.length} Matched Labs`
+                      : 'No Matches Found'}
                 </h2>
-                {totalFound > 0 && (
+                {!error && totalFound > 0 && (
                   <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
                     Scanned {totalFound} candidate pages · Showing top {results.length} by match score
                   </p>
@@ -167,7 +193,14 @@ export default function Home() {
               </button>
             </div>
 
-            {results.length === 0 ? (
+            {error ? (
+              <div className="text-center py-20 glass-card">
+                <p className="text-lg font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
+                  Something went wrong
+                </p>
+                <p style={{ color: 'var(--text-muted)' }}>{error}</p>
+              </div>
+            ) : results.length === 0 ? (
               <div className="text-center py-20 glass-card">
                 <div className="text-5xl mb-4">🔬</div>
                 <p className="text-lg font-medium mb-2" style={{ color: 'var(--text-primary)' }}>No matching labs found</p>

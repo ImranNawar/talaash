@@ -29,12 +29,12 @@ export default function About() {
                 border: '1px solid #e0e4e8',
                 backdropFilter: 'blur(10px)'
               }}>
-              <h2 className="text-2xl font-bold mb-4" style={{ color: 'var(--brand)' }}>What is Talaash?</h2>
+              {/* <h2 className="text-2xl font-bold mb-4" style={{ color: 'var(--brand)' }}>What is Talaash?</h2> */}
               <p className="text-base leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                Talaash is an intelligent research lab discovery platform that combines artificial intelligence, 
-                web scraping, and machine learning to help you find the perfect research lab matching your 
-                academic interests and research profile. Whether you're looking for collaboration opportunities, 
-                internships, or exploring potential research partnerships, Talaash streamlines the discovery process.
+                talaash (تلاش) is an Urdu word meaning search or quest. This tool is build to help researchers and students 
+                in finding research labs and groups that genuinely match their interests, skills, and goals. It is an intelligent 
+                research lab discovery platform that combines artificial intelligence, web scraping, and machine learning. 
+                Whether you're looking for collaboration opportunities, internships, or exploring potential research partnerships, Talaash streamlines the discovery process.
               </p>
             </section>
 
@@ -83,32 +83,6 @@ export default function About() {
               </div>
             </section>
 
-            {/* Key Features */}
-            <section className="p-8 rounded-xl transition-all hover:shadow-lg"
-              style={{
-                background: '#ffffff',
-                border: '1px solid #e0e4e8',
-                backdropFilter: 'blur(10px)'
-              }}>
-              <h2 className="text-2xl font-bold mb-6" style={{ color: 'var(--brand)' }}>Key Features</h2>
-              <ul className="space-y-4">
-                {[
-                  'AI-Powered Matching: Our machine learning algorithms analyze your profile to find labs with optimal compatibility',
-                  'Global Coverage: Search across research institutions worldwide with comprehensive data extraction',
-                  'Fast Discovery: Get results in minutes instead of hours of manual research',
-                  'Detailed Analytics: Comprehensive matching scores and lab information for informed decisions',
-                  'Smart Ranking: Laboratories ranked by relevance and alignment with your research interests',
-                  'Real-Time Updates: Fresh data from multiple sources ensures accurate and current information'
-                ].map((feature, i) => (
-                  <li key={i} className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-5 h-5 rounded-full mt-1" style={{
-                      background: 'linear-gradient(135deg, #4361ee, #8b5cf6)'
-                    }}></span>
-                    <span style={{ color: 'var(--text-secondary)' }}>{feature}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
 
             {/* How It Works */}
             <section className="p-8 rounded-xl transition-all hover:shadow-lg"

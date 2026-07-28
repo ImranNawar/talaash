@@ -54,8 +54,8 @@ export default function Footer() {
         <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-sm" style={{ color: 'var(--text-muted)' }}>
           <p>&copy; {currentYear} Talaash. All rights reserved.</p>
           <div className="flex items-center gap-6">
-            <a href="#" className="hover:opacity-75 transition-opacity">Privacy Policy</a>
-            <a href="#" className="hover:opacity-75 transition-opacity">Terms of Service</a>
+            {/* <a href="#" className="hover:opacity-75 transition-opacity">Privacy Policy</a>
+            <a href="#" className="hover:opacity-75 transition-opacity">Terms of Service</a> */}
           </div>
         </div>
       </div>
