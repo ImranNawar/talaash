@@ -92,28 +92,13 @@ export default function About() {
                 backdropFilter: 'blur(10px)'
               }}>
               <h2 className="text-2xl font-bold mb-4" style={{ color: 'var(--brand)' }}>How It Works</h2>
-              <ol className="space-y-3">
-                {[
-                  'Fill out your research profile describing your interests, skills, and research focus',
-                  'Our AI analyzes your profile and generates optimized search queries',
-                  'The system discovers and scrapes relevant research laboratories',
-                  'A knowledge base is built from the collected data',
-                  'Advanced matching algorithms rank labs by compatibility',
-                  'Review detailed results with matching scores and lab information',
-                  'Connect with the perfect research lab for your next opportunity'
-                ].map((step, i) => (
-                  <li key={i} className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-sm font-semibold"
-                      style={{
-                        background: 'linear-gradient(135deg, #4361ee, #8b5cf6)',
-                        color: 'white'
-                      }}>
-                      {i + 1}
-                    </span>
-                    <span style={{ color: 'var(--text-secondary)' }}>{step}</span>
-                  </li>
-                ))}
-              </ol>
+              <div className="overflow-hidden rounded-2xl border border-slate-200">
+                <img
+                  src="/figure.png"
+                  alt="How It Works"
+                  className="w-full h-auto object-cover"
+                />
+              </div>
             </section>
 
             {/* CTA Section */}
