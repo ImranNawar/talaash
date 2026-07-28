@@ -4,7 +4,7 @@ phase4_scraping.py - Phase 4: Async Playwright Scraping + Gemini LLM Extraction.
 - Runs 10 async Playwright workers (semaphore)
 - 8-second timeout per page, silent skip on failure
 - Strips nav/footer/sidebar; keeps h1-h3, p, ul, li text
-- Calls Gemini 2.5 Flash to extract structured LabProfile JSON
+- Calls Gemini Flash to extract structured LabProfile JSON
 - Validates with Pydantic, discards on failure
 - Uses file-based cache (24h TTL) per URL
 """
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # Gemini setup
 genai.configure(api_key=GEMINI_API_KEY)
-_gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+_gemini_model = genai.GenerativeModel("gemini-3.5-flash")
 
 CONCURRENCY = 10
 PAGE_TIMEOUT_MS = 8000

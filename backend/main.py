@@ -2,9 +2,9 @@
 main.py - FastAPI application for Talaash.
 
 Endpoints:
-  GET  /api/health       - health check
-  POST /api/search       - full 7-phase pipeline with SSE progress streaming
-  POST /api/search/sync  - same pipeline, returns JSON directly (no streaming)
+  GET  /api/health         - health check
+  POST /api/search/stream  - full 7-phase pipeline with SSE progress streaming
+  POST /api/search         - same pipeline, returns JSON directly (no streaming)
 """
 from __future__ import annotations
 import asyncio
@@ -25,7 +25,7 @@ from pydantic import ValidationError
 from models import UserInput, SearchResponse, MatchResult, LabProfile
 from phase2_expansion import expand_queries
 from phase4_scraping import scrape_and_extract
-from phase5_vectorstore import embed_and_store, embed_user_query
+from phase5_vectorstore import clear_collection, embed_and_store, embed_user_query
 from phase6_matching import match_and_rank, build_results_from_profiles
 
 logging.basicConfig(
@@ -136,9 +136,10 @@ async def run_pipeline(user_input: UserInput):
         yield sse_results([], 0)
         return
 
-    # Phase 5: Embed and store profiles in ChromaDB
+    # Phase 5: Embed and store profiles in ChromaDB (scoped to this search)
     yield sse_event(5, "Building knowledge base", "running")
     try:
+        await asyncio.get_event_loop().run_in_executor(None, clear_collection)
         await asyncio.get_event_loop().run_in_executor(
             None, embed_and_store, profiles
         )

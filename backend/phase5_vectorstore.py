@@ -2,14 +2,14 @@
 phase5_vectorstore.py - Phase 5: Vector Storage with ChromaDB + Gemini embeddings.
 
 - Embeds structured fields (research_areas + methods_used + current_projects + lab_name + university)
-  using Gemini text-embedding-preview-0814 (768-dim).
+  using Gemini gemini-embedding-001 (768-dim via output_dimensionality).
 - Stores in local ChromaDB collection 'talaash_labs'.
 - User query embeds only: research_interests + technical_skills + keywords.
 - Embeddings are cached permanently (until source profile cache expires).
 """
 from __future__ import annotations
-import ast
 import datetime
+import json
 import logging
 import os
 
@@ -25,6 +25,8 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 CHROMA_DIR = os.path.join(os.path.dirname(__file__), ".chromadb")
 COLLECTION_NAME = "talaash_labs"
+EMBEDDING_DIM = 768
+EMBEDDING_MODEL = "models/gemini-embedding-001"
 
 _chroma_client = None
 _collection = None
@@ -35,7 +37,7 @@ class DummyEmbeddingFunction:
     def __call__(self, input):
         # Return zero vectors - we handle embeddings ourselves
         # ChromaDB 0.4.16+ expects 'input' parameter, not 'texts'
-        return [[0.0] * 768 for _ in input]
+        return [[0.0] * EMBEDDING_DIM for _ in input]
 
 def _get_collection():
     global _chroma_client, _collection
@@ -51,33 +53,21 @@ def _get_collection():
 
 
 def _embed_text(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> list[float]:
-    """Embed a single text string using available Gemini embedding model (768-dim fallback)."""
-    cache_key = f"embed:{task_type}:{text[:200]}"
+    """Embed a single text string using gemini-embedding-001 (768-dim). Raises on failure."""
+    cache_key = f"embed:v2:{task_type}:{text[:200]}"
     cached = cache.get(cache_key, None)  # permanent TTL
     if cached:
         return cached
 
-    try:
-        # Try the latest model first
-        result = genai.embed_content(
-            model="models/text-embedding-preview-0814",
-            content=text,
-            task_type=task_type,
-        )
-    except Exception as e1:
-        try:
-            # Fallback to stable embedding model
-            logger.warning(f"Preview model failed: {e1} - trying stable model")
-            result = genai.embed_content(
-                model="models/embedding-001",
-                content=text,
-            )
-        except Exception as e2:
-            # If both fail, return zero vector
-            logger.warning(f"All embedding models failed: {e2} - returning zero vector")
-            return [0.0] * 768
-    
+    result = genai.embed_content(
+        model=EMBEDDING_MODEL,
+        content=text,
+        task_type=task_type,
+        output_dimensionality=EMBEDDING_DIM,
+    )
     vector = result["embedding"]
+    if not vector or all(x == 0.0 for x in vector):
+        raise ValueError("Embedding API returned empty or zero vector")
     cache.set(cache_key, vector)
     return vector
 
@@ -98,10 +88,32 @@ def _profile_to_embed_string(profile: LabProfile) -> str:
     return " | ".join(parts)
 
 
+def _serialize_list(items: list) -> str:
+    """Serialize a string list as JSON for ChromaDB metadata."""
+    return json.dumps(list(items or []), ensure_ascii=False)
+
+
+def _parse_string_list(raw) -> list[str]:
+    """Parse a list field from ChromaDB metadata (JSON preferred, comma-split fallback)."""
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if not isinstance(raw, str):
+        return []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(x).strip() for x in parsed if str(x).strip()]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return [x.strip() for x in raw.split(",") if x.strip()]
+
+
 def embed_and_store(profiles: list[LabProfile]) -> None:
     """
     Embed each profile's structured fields and store in ChromaDB.
-    Source URL is the document ID.
+    Source URL is the document ID. Profiles that fail to embed are skipped.
     """
     if not profiles:
         return
@@ -122,9 +134,8 @@ def embed_and_store(profiles: list[LabProfile]) -> None:
         try:
             vector = _embed_text(embed_str, task_type="RETRIEVAL_DOCUMENT")
         except Exception as e:
-            logger.warning(f"Embedding failed for {url}: {e} — using zero vector fallback")
-            # Use a zero vector as fallback (768 dimensions for compatibility)
-            vector = [0.0] * 768
+            logger.warning(f"Embedding failed for {url}: {e} — skipping profile")
+            continue
 
         # Flatten profile to metadata (ChromaDB metadata must be flat str/int/float/bool)
         meta = {
@@ -132,9 +143,9 @@ def embed_and_store(profiles: list[LabProfile]) -> None:
             "lab_name":             profile.lab_name or "",
             "university":           profile.university or "",
             "department":           profile.department or "",
-            "research_areas":       ", ".join(profile.research_areas),
-            "methods_used":         ", ".join(profile.methods_used),
-            "current_projects":     ", ".join(profile.current_projects),
+            "research_areas":       _serialize_list(profile.research_areas),
+            "methods_used":         _serialize_list(profile.methods_used),
+            "current_projects":     _serialize_list(profile.current_projects),
             "contact_email":        profile.contact_email or "",
             "github_url":           profile.github_url or "",
             "is_accepting_students": (
@@ -142,8 +153,11 @@ def embed_and_store(profiles: list[LabProfile]) -> None:
                 else (False if profile.is_accepting_students is False else "null")
             ),
             "student_requirements": profile.student_requirements or "",
-            "co_pis":               ", ".join(profile.co_pis),
-            "recent_publications":  str([p.model_dump() for p in profile.recent_publications]),
+            "co_pis":               _serialize_list(profile.co_pis),
+            "recent_publications":  json.dumps(
+                [p.model_dump() for p in profile.recent_publications],
+                ensure_ascii=False,
+            ),
             "lab_url":              profile.lab_url or "",
         }
 
@@ -155,13 +169,15 @@ def embed_and_store(profiles: list[LabProfile]) -> None:
     if ids:
         collection.upsert(ids=ids, embeddings=embeddings, metadatas=metadatas, documents=documents)
         logger.info(f"Stored {len(ids)} profiles in ChromaDB.")
+    else:
+        logger.warning("No profiles were embedded — ChromaDB store is empty for this search.")
 
 
 def embed_user_query(user_input: UserInput) -> list[float]:
     """
     Embed only research_interests + technical_skills + keywords for ChromaDB querying.
     (Full user_profile_string is used for Groq + Gemini re-ranking, not here.)
-    Returns zero vector if embedding fails.
+    Returns empty list if embedding fails (triggers Phase 6 / main fallbacks).
     """
     parts = [user_input.research_interests, user_input.technical_skills]
     if user_input.keywords:
@@ -170,12 +186,12 @@ def embed_user_query(user_input: UserInput) -> list[float]:
     try:
         return _embed_text(query_text, task_type="RETRIEVAL_QUERY")
     except Exception as e:
-        logger.warning(f"User query embedding failed: {e} — returning zero vector")
-        return [0.0] * 768
+        logger.warning(f"User query embedding failed: {e} — returning empty embedding")
+        return []
 
 
 def clear_collection() -> None:
-    """Drop and recreate the collection (for testing)."""
+    """Drop and recreate the collection (per-search isolation + testing)."""
     global _collection
     import chromadb  # Lazy import
     client = chromadb.PersistentClient(path=CHROMA_DIR)
@@ -198,18 +214,27 @@ def _has_recent_publication(publications: list[Publication]) -> bool:
 
 def _rebuild_profile_from_meta(meta: dict, url: str) -> LabProfile:
     """Reconstruct a LabProfile from ChromaDB flat metadata."""
-    # Parse recent_publications from stored string repr
     recent_pubs = []
     raw_pubs = meta.get("recent_publications", "[]")
     try:
-        parsed = ast.literal_eval(raw_pubs)
-        for p in parsed:
-            try:
-                recent_pubs.append(Publication(**p))
-            except Exception:
-                pass
+        parsed = json.loads(raw_pubs) if isinstance(raw_pubs, str) else raw_pubs
+        if isinstance(parsed, list):
+            for p in parsed:
+                try:
+                    recent_pubs.append(Publication(**p))
+                except Exception:
+                    pass
     except Exception:
-        pass
+        try:
+            import ast
+            parsed = ast.literal_eval(raw_pubs)
+            for p in parsed:
+                try:
+                    recent_pubs.append(Publication(**p))
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     is_accepting = meta.get("is_accepting_students")
     if is_accepting == "null":
@@ -217,13 +242,13 @@ def _rebuild_profile_from_meta(meta: dict, url: str) -> LabProfile:
 
     return LabProfile(
         pi_name=meta.get("pi_name") or None,
-        co_pis=[x.strip() for x in meta.get("co_pis", "").split(",") if x.strip()],
+        co_pis=_parse_string_list(meta.get("co_pis", "")),
         university=meta.get("university") or None,
         department=meta.get("department") or None,
         lab_name=meta.get("lab_name") or None,
-        research_areas=[x.strip() for x in meta.get("research_areas", "").split(",") if x.strip()],
-        current_projects=[x.strip() for x in meta.get("current_projects", "").split(",") if x.strip()],
-        methods_used=[x.strip() for x in meta.get("methods_used", "").split(",") if x.strip()],
+        research_areas=_parse_string_list(meta.get("research_areas", "")),
+        current_projects=_parse_string_list(meta.get("current_projects", "")),
+        methods_used=_parse_string_list(meta.get("methods_used", "")),
         recent_publications=recent_pubs,
         lab_url=url,
         contact_email=meta.get("contact_email") or None,

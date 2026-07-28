@@ -2,7 +2,7 @@
 phase6_matching.py - Phase 6: Two-Stage Matching Engine.
 
 Stage 1: ChromaDB top-20 cosine similarity (threshold 0.4, retry at 0.3)
-Stage 2: Gemini 1.5 Flash re-ranking (trimmed profiles, score 0-100, reasons, gaps)
+Stage 2: Gemini Flash re-ranking (trimmed profiles, score 0-100, reasons, gaps)
 Final scoring formula per Logic.md (exact, clamped >= 0).
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ from phase5_vectorstore import _get_collection
 
 logger = logging.getLogger(__name__)
 genai.configure(api_key=GEMINI_API_KEY)
-_gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+_gemini_model = genai.GenerativeModel("gemini-3.5-flash")
 
 GENERIC_PLACEHOLDER_PHRASES = (
     "profile extracted from research lab website",
@@ -225,32 +225,57 @@ def _has_recent_publication(publications: list[Publication]) -> bool:
     return any(p.year >= cutoff for p in publications)
 
 
+def _parse_string_list(raw) -> list[str]:
+    """Parse a list field from ChromaDB metadata (JSON preferred, comma-split fallback)."""
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if not isinstance(raw, str):
+        return []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(x).strip() for x in parsed if str(x).strip()]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return [x.strip() for x in raw.split(",") if x.strip()]
+
+
 def _rebuild_profile_from_meta(meta: dict, url: str) -> LabProfile:
     """Reconstruct a LabProfile from ChromaDB flat metadata."""
-    # Parse recent_publications from stored string repr
     recent_pubs = []
     raw_pubs = meta.get("recent_publications", "[]")
     try:
-        parsed = ast.literal_eval(raw_pubs)
-        for p in parsed:
-            try:
-                recent_pubs.append(Publication(**p))
-            except Exception:
-                pass
+        parsed = json.loads(raw_pubs) if isinstance(raw_pubs, str) else raw_pubs
+        if isinstance(parsed, list):
+            for p in parsed:
+                try:
+                    recent_pubs.append(Publication(**p))
+                except Exception:
+                    pass
     except Exception:
-        pass
+        try:
+            parsed = ast.literal_eval(raw_pubs)
+            for p in parsed:
+                try:
+                    recent_pubs.append(Publication(**p))
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     is_accepting = _coerce_accepting(meta.get("is_accepting_students"))
 
     return LabProfile(
         pi_name=meta.get("pi_name") or None,
-        co_pis=[x.strip() for x in meta.get("co_pis", "").split(",") if x.strip()],
+        co_pis=_parse_string_list(meta.get("co_pis", "")),
         university=meta.get("university") or None,
         department=meta.get("department") or None,
         lab_name=meta.get("lab_name") or None,
-        research_areas=[x.strip() for x in meta.get("research_areas", "").split(",") if x.strip()],
-        current_projects=[x.strip() for x in meta.get("current_projects", "").split(",") if x.strip()],
-        methods_used=[x.strip() for x in meta.get("methods_used", "").split(",") if x.strip()],
+        research_areas=_parse_string_list(meta.get("research_areas", "")),
+        current_projects=_parse_string_list(meta.get("current_projects", "")),
+        methods_used=_parse_string_list(meta.get("methods_used", "")),
         recent_publications=recent_pubs,
         lab_url=url,
         contact_email=meta.get("contact_email") or None,
@@ -305,7 +330,7 @@ def _compute_final_score(
 
 
 def _gemini_rerank(candidates: list[LabProfile], user_profile_string: str) -> list[dict] | None:
-    """Call Gemini 2.5 Flash to re-rank. Returns list of {lab_url, score, match_reasons, gaps}."""
+    """Call Gemini Flash to re-rank. Returns list of {lab_url, score, match_reasons, gaps}."""
     trimmed = [_trim_for_reranking(p) for p in candidates]
     prompt = RERANKER_PROMPT.format(
         user_profile=user_profile_string,

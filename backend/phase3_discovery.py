@@ -226,7 +226,9 @@ async def _search_serpapi(query: str, client: httpx.AsyncClient) -> list[str]:
         except Exception as e:
             logger.warning(f"Google CSE error for '{query}': {e}")
 
-    cache.set(cache_key, urls)
+    # Only cache successful non-empty results so quota/errors don't poison TTL
+    if urls:
+        cache.set(cache_key, urls)
     return urls
 
 

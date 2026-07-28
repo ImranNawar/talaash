@@ -2,11 +2,14 @@
 config.py - loads all environment variables / API keys.
 """
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env first, then .env.local (with override for local dev)
-load_dotenv()
-load_dotenv('.env.local', override=False)
+_BACKEND_DIR = Path(__file__).resolve().parent
+
+# Load .env from the backend directory (not CWD), then .env.local
+load_dotenv(_BACKEND_DIR / ".env")
+load_dotenv(_BACKEND_DIR / ".env.local", override=False)
 
 GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
